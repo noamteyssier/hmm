@@ -22,13 +22,16 @@ class HMM:
         self.r_nodes = None         # the reverse likelihoods of each node (NxT)
         self.g_mat = None           # the multiplied forward and reverse likelihoods (NxT)
         self.norm_g_mat = None      # the normalized gamma matrix of probabilities across states (NxT)
-
-    def forward_backward(self, observation):
+    def forward_backward(self, observation, normalize = False):
         self.forward(observation)
         self.backward(observation)
+
+        if normalize:
+            self.normalize_alpha()
+            self.normalize_beta()
+
         self.gamma_matrix(len(observation))
         return self.argmax_gamma(len(observation))
-
     def forward(self, observation):
         '''forward propagation along trellis diagram'''
 
@@ -81,10 +84,20 @@ class HMM:
                         for s in range(self.N)
                     )
         return self.b_nodes
-    def probabiliy_observation(self, observation):
+    def normalize_alpha(self):
+        '''alpha_hat = alpha normalized across i at each t'''
+        for t in range(self.f_nodes.shape[1]):
+            total = sum([self.f_nodes[i][t] for i in range(self.N)])
+            for i in range(self.N):
+                self.f_nodes[i][t] = self.f_nodes[i][t] / total
+    def normalize_beta(self):
+        '''beta_hat = beta normalized at each t < T across i'''
+        for t in range(self.b_nodes.shape[1] - 1):
+            total = sum([self.b_nodes[i][t] for i in range(self.N)])
+            for i in range(self.N):
+                self.b_nodes[i][t] = self.b_nodes[i][t] / total
+    def probability_observation(self, observation):
         return sum([self.f_nodes[i][-1] for i in range(self.N)])
-
-
     def index_obs(self, o):
         '''return index position in observations of given observation'''
         return(self.obs.index(o))
@@ -275,6 +288,17 @@ class HMM:
                 new_B[i][self.index_obs(o)] = num / denom
 
         return new_B
+    def train_multiple(self, observation_matrix):
+
+        arr_o = np.array([
+            {'P_o' : None, 'alpha_hat' : None, 'beta_hat' : None} for _ in observation_matrix
+        ])
+
+
+        for o in observation_matrix:
+            self.forward_backward(o, normalize = True)
+
+
 
 
 def generate_random_A(states):
@@ -307,17 +331,28 @@ def generate_random_B(states, obs):
             norm_b[i][v] = norm_b[i][v] / total
 
     return norm_b
-def generate_random_pi(states):
+def generate_random_pi(states, equal_odds=False):
+    '''create a random vector of initial states'''
     n = len(states)
 
-    pi = np.array([
-        random.random() for i in range(n)
-    ])
+    if not equal_odds:
+        pi = np.array([
+            random.random() for i in range(n)
+        ])
+    else:
+        val = random.random()
+        pi = np.array([
+            val for _ in range(n)
+        ])
 
     norm_pi = [p/sum(pi) for p in pi]
 
     return norm_pi
 def random_observations(obs, n, hmm):
+    '''
+    create a series of random observations that have higher probabilities
+        of fitting in the model
+    '''
 
     attempts = set()
 
@@ -325,17 +360,15 @@ def random_observations(obs, n, hmm):
         o = [random.choice(obs) for i in range(n)]
         if ''.join(o) not in attempts:
             hmm.forward_backward(o)
-            po = hmm.probabiliy_observation(o)
+            po = hmm.probability_observation(o)
             attempts.add(''.join(o))
             att = [po, ''.join(o), ''.join(hmm.viterbi(o))]
             if po > 0.002:
                 print('\t'.join(str(i) for i in att))
         # break
-
-
-
-
-
+def read_file(fn):
+    for line in open(fn,'r'):
+        yield([c for c in line.strip('\n')])
 def main():
 
     states = ['r','c','s']
@@ -378,41 +411,59 @@ def main():
 
     random.seed(42)
 
+    #
+    # num_obs = 10
+    # random_observations(obs, num_obs, hmm)
+
+
+    # predictions with initial probabilities
     hmm = HMM(states, obs, A, B, pi)
-
-    num_obs = 10
-    random_observations(obs, num_obs, hmm)
-
-
-    # fb = hmm.forward_backward(observation)
-    # vit = hmm.viterbi(observation)
-    #
-    #
-    #
-    # random_a = generate_random_A(states)
-    # random_b = generate_random_B(states, obs)
-    # random_pi = generate_random_pi(states)
-    #
-    #
-    # new_hmm = HMM(states, obs, random_a, random_b, random_pi)
-    # new_hmm.forward_backward(observation)
-    # new_hmm.train(observation, iter = iterations)
-    # new_fb = new_hmm.forward_backward(observation)
-    # new_vit = new_hmm.viterbi(observation)
+    fb = hmm.forward_backward(observation)
+    vit = hmm.viterbi(observation)
 
 
-    # print('prediction   : ', ''.join(fb))
-    # print('trained_pr   : ', ''.join(new_fb))
-    # print('viterbi_max  : ', ''.join(vit))
-    # print('trained_max  : ', ''.join(new_vit))
-    # print('observation  : ', ''.join(observation))
+    # predictions with random starting probabilities
+    random_a = generate_random_A(states)
+    random_b = generate_random_B(states, obs)
+    random_pi = generate_random_pi(states)
 
 
+    new_hmm = HMM(states, obs, random_a, random_b, random_pi)
+    new_hmm.forward_backward(observation)
+    new_hmm.train(observation, iter = iterations)
+    new_fb = new_hmm.forward_backward(observation)
+    new_vit = new_hmm.viterbi(observation)
 
+
+    print('prediction   : ', ''.join(fb))
+    print('trained_pr   : ', ''.join(new_fb))
+    print('viterbi_max  : ', ''.join(vit))
+    print('trained_max  : ', ''.join(new_vit))
+    print('observation  : ', ''.join(observation))
+def ama1():
+    p = argparse.ArgumentParser()
+    p.add_argument('-i','--input',help='input file to train on',required=True)
+    args = p.parse_args()
+
+    states = ['i','u']
+    obs = ['t','f']
+
+    transitions = generate_random_A(states)
+    emissions = generate_random_B(states, obs)
+    pi = generate_random_pi(states, equal_odds=True)
+    hmm = HMM(states,obs, transitions, emissions, pi)
+
+
+    obs_matrix = [o for o in read_file(args.input)]
+
+
+    hmm.train_multiple(obs_matrix)
 
 
 
 
 
 if __name__ == '__main__':
-    main()
+    random.seed(42)
+    # main()
+    ama1()
