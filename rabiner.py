@@ -18,8 +18,13 @@ class HMM:
         self.B = B      # index[i][o]
         self.pi = pi
 
+        # indexed nodes[i][t]
         self.f_nodes = None         # the forward likelihoods of each node (NxT)
         self.r_nodes = None         # the reverse likelihoods of each node (NxT)
+
+        self.likelihood = None      # the sum of all likelihoods on node_T across all states N
+
+
         self.g_mat = None           # the multiplied forward and reverse likelihoods (NxT)
         self.norm_g_mat = None      # the normalized gamma matrix of probabilities across states (NxT)
     def forward_backward(self, observation, normalize = False):
@@ -57,7 +62,9 @@ class HMM:
                 self.f_nodes[i][t] = t_m1 * self.B[i][self.index_obs(obs)]
 
         # termination
-        self.p_forward = sum(sum(self.f_nodes))
+        self.p_forward = sum(
+            self.f_nodes[i][t] for i in range(self.N)
+        )
 
         return self.f_nodes
     def backward(self, observation):
@@ -83,6 +90,7 @@ class HMM:
                             self.b_nodes[s][-1-t+1] \
                         for s in range(self.N)
                     )
+
         return self.b_nodes
     def normalize_alpha(self):
         '''alpha_hat = alpha normalized across i at each t'''
@@ -288,15 +296,109 @@ class HMM:
                 new_B[i][self.index_obs(o)] = num / denom
 
         return new_B
-    def train_multiple(self, observation_matrix):
+    def train_multiple(self, observation_matrix, iter = 2):
 
-        arr_o = np.array([
-            {'P_o' : None, 'alpha_hat' : None, 'beta_hat' : None} for _ in observation_matrix
+        print('original')
+        print(self.A)
+        print(self.B)
+        for it in range(iter):
+            arr_o = np.array([
+                {'prob_obs' : None, 'alpha' : None, 'beta' : None} for _ in observation_matrix
+            ])
+
+            K = len(observation_matrix)
+
+            for k in range(K):
+                self.forward_backward(observation_matrix[k], normalize = False)
+                arr_o[k]['prob_obs'] = self.p_forward
+                arr_o[k]['alpha'] = self.f_nodes.copy()
+                arr_o[k]['beta'] = self.b_nodes.copy()
+
+            self.update_multiple(arr_o, K, observation_matrix)
+            print('iteration %i' %it)
+            print(self.A)
+            print(self.B)
+            print('-----')
+
+    def update_multiple(self, arr_o, K, observation_matrix):
+        sum_prob_obs = sum(1 / arr_o[k]['prob_obs'] for k in range(K))
+
+        # indexed a[i][j]
+        self.A_bar = np.array([
+        [{'num' : 0, 'denom' : 0} for _ in range(self.N)] for _ in range(self.N)
+        ])
+
+        # indexed b[i][o]
+        self.B_bar = np.array([
+        [{'num' : 0, 'denom' : 0} for _ in range(self.M)] for _ in range(self.N)
         ])
 
 
-        for o in observation_matrix:
-            self.forward_backward(o, normalize = True)
+        # iterate across all observation sequences
+        for k in range(K):
+
+            # length of observation_k
+            Tk = len(observation_matrix[k])
+
+            # iterate across the length of k
+            for tk in range(Tk - 1):
+
+                # create estimate of transition probabilities
+                for i in range(self.N):
+                    for j in range(self.N):
+
+                        # alpha_tk_i at timepoint tk
+                        term1 = arr_o[k]['alpha'][i][tk]
+
+                        # transition from i to j
+                        term2 = self.A[i][j]
+
+                        # emission of j and obs_k_tk+1
+                        term3 = self.B[j][self.index_obs(observation_matrix[k][tk + 1])]
+
+                        # beta_tk+1_j at timepoint tk
+                        term4 = arr_o[k]['beta'][j][tk+1]
+
+                        # beta_tk_i at timepoint tk
+                        term5 = arr_o[k]['beta'][i][tk]
+
+                        abar_prod_num = np.product([term1, term2, term3, term4])
+                        abar_prod_denom = np.product([term1, term5])
+
+                        # sum across all timepoints
+                        self.A_bar[i][j]['num'] += abar_prod_num
+                        self.A_bar[i][j]['denom'] += abar_prod_denom
+
+                # create estimate of emission probabilities
+                for i in range(self.N):
+                    for o in range(self.M):
+                        term1 = arr_o[k]['alpha'][i][tk]
+                        term2 = arr_o[k]['beta'][i][o] if o == self.index_obs(observation_matrix[k][tk]) else 0.0
+                        term3 = arr_o[k]['beta'][i][o]
+
+                        bbar_prod_num = np.product([term1, term2])
+                        bbar_prod_denom = np.product([term1, term3])
+
+                        self.B_bar[i][o]['num'] += bbar_prod_num
+                        self.B_bar[i][o]['denom'] += bbar_prod_denom
+
+
+        # perform final calculation across matrices and update old probs
+        for i in range(self.N):
+            for j in range(self.N):
+                self.A_bar[i][j]['value'] = self.A_bar[i][j]['num'] / self.A_bar[i][j]['denom']
+                self.A[i][j] = self.A_bar[i][j]['value']
+
+
+        for i in range(self.N):
+            for o in range(self.M):
+                self.B_bar[i][o]['value'] = self.B_bar[i][o]['num'] / self.B_bar[i][o]['denom']
+                self.B[i][o] = self.B_bar[i][o]['value']
+
+
+
+
+
 
 
 
@@ -456,8 +558,8 @@ def ama1():
 
     obs_matrix = [o for o in read_file(args.input)]
 
-
     hmm.train_multiple(obs_matrix)
+
 
 
 
