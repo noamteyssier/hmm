@@ -113,11 +113,6 @@ class HMM:
             self.get_gamma(obs)
 
         return [new_a, new_b, new_pi]
-
-
-
-
-
     def get_epsilon(self, obs):
         """calculate epsilon matrix"""
         T = len(obs)
@@ -155,6 +150,7 @@ class HMM:
 
 
         self.epsilon = epsilon.copy()
+        return epsilon
     def get_gamma(self, obs):
         """calculate gamma matrix"""
         T = len(obs)
@@ -171,6 +167,7 @@ class HMM:
                 )
 
         self.gamma = gamma.copy()
+        return gamma
     def update_a(self, T, overwrite=False):
         """update transmission matrix """
         new_a = self.a.copy()
@@ -211,9 +208,70 @@ class HMM:
 
         return new_pi
     def train_multiple(self, X):
+
+        new_a = np.array([
+            [{'num' : 0, 'denom' : 0 } for _ in range(self.N)] for _ in range(self.N)
+        ])
+
+        new_b = np.array([
+            [{'num' : 0, 'denom' : 0 } for _ in range(self.M)] for _ in range(self.N)
+        ])
+
         for x in X:
-            a,b,p = self.baum_welch(x, iter = 1, overwrite = False)
-            print(a)
+            self.forward_backward(x)
+            self.update_a_multiple(x, new_a)
+            self.update_b_multiple(x, new_b)
+            self.update_multiple(new_a, new_b)
+    def update_a_multiple(self, obs, new_a):
+        T = len(obs)
+
+        for i in range(self.N):
+
+            denom = np.sum(
+                [self.alpha[t][i] * self.beta[t][i] for t in range(T-1)]
+            )
+
+            for j in range(self.N):
+                new_a[i][j]['num'] += np.sum(
+                    [
+                        np.product([
+                            self.alpha[t][i],
+                            self.a[i][j],
+                            self.b[j][self.index_obs(obs[t+1])],
+                            self.beta[t+1][j]
+                        ]) for t in range(T-1)
+                    ]
+                )
+                new_a[i][j]['denom'] += denom
+
+        return new_a
+    def update_b_multiple(self, obs, new_b):
+        T = len(obs)
+
+        for k in range(self.M):
+            vk_indices = [i for i,v in enumerate(obs) if self.index_obs(v) == k]
+            for i in range(self.N):
+                new_b[i][k]['num'] += np.sum([
+                    [self.alpha[t][i] * self.beta[t][i]] for t in range(T-1) if t in vk_indices
+                ])
+                new_b[i][k]['denom'] += np.sum([
+                    [self.alpha[t][i] * self.beta[t][i]] for t in range(T-1)
+                ])
+        return new_b
+
+            # break
+    def update_multiple(self, new_a, new_b):
+
+        for i in range(self.N):
+            for j in range(self.N):
+                self.a[i][j] = new_a[i][j]['num'] / new_a[i][j]['denom']
+
+        for i in range(self.N):
+            for k in range(self.M):
+                self.b[i][k] = new_b[i][k]['num'] / new_b[i][k]['denom']
+    def viterbi(self, obs):
+        pass
+
 
 
 
@@ -299,6 +357,9 @@ def main():
 
     hmm.train_multiple(observations)
 
+    hmm.viterbi(obs)
+
+
 
 
 
@@ -306,5 +367,5 @@ def main():
 
 
 if __name__ == '__main__':
-    random.seed(42)
+    random.seed(41)
     main()
