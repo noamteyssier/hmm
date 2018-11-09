@@ -18,7 +18,6 @@ class HMM:
         self.alpha = None
         self.beta = None
         self.beta_v = None
-
     def index_obs(self, o_symbol):
         """return index of observed symbol in class"""
         return self.o_states.index(o_symbol)
@@ -221,7 +220,14 @@ class HMM:
             self.forward_backward(x)
             self.update_a_multiple(x, new_a)
             self.update_b_multiple(x, new_b)
-            self.update_multiple(new_a, new_b)
+
+        self.update_multiple(new_a, new_b)
+
+
+        likelihoods = []
+        [likelihoods.append(np.log(self.forward_backward(x))) for x in X]
+        return sum(likelihoods)
+
     def update_a_multiple(self, obs, new_a):
         T = len(obs)
 
@@ -270,8 +276,53 @@ class HMM:
             for k in range(self.M):
                 self.b[i][k] = new_b[i][k]['num'] / new_b[i][k]['denom']
     def viterbi(self, obs):
-        pass
 
+        T = len(obs)
+
+        # vit[t][i]
+        vit = np.array([
+            [{'delta' : 0, 'psi' : 0} for _ in range(self.N)] for _ in range(T)
+        ])
+
+        # build trellis
+        for t in range(T):
+            ot = self.index_obs(obs[t])
+            for i in range(self.N):
+                if t == 0:
+                    vit[t][i]['delta'] = np.product([
+                        self.pi[i],
+                        self.b[i][ot]
+                    ])
+                    continue
+
+                vit[t][i]['delta'] = np.product([
+                    max(
+                        [vit[t-1][j]['delta'] * self.a[j][i] for j in range(self.N)]
+                    ),
+                    self.b[i][ot]
+                ])
+
+                vit[t][i]['psi'] = np.argmax([
+                    vit[t-1][j]['delta'] * self.a[j][i] for j in range(self.N)
+                ])
+
+        # backtrack trellis
+        qt_star = np.argmax([
+            vit[-1][i]['delta'] for i in range(self.N)
+        ])
+        backtrack = vit[-1][qt_star]['psi']
+
+        path = [qt_star]
+
+
+        for t in range(T-2, -1, -1):
+            path.insert(
+                0,
+                vit[t+1][backtrack]['psi']
+            )
+            backtrack = vit[t+1][backtrack]['psi']
+
+        return [self.h_states[p] for p in path]
 
 
 
@@ -328,6 +379,14 @@ def generate_random_pi(states, equal_odds=False):
     norm_pi = [p/sum(pi) for p in pi]
 
     return norm_pi
+def remove_false_positives(hmm):
+    # print(hmm.b)
+
+    hmm.b[1][0] = 0.0000001
+    hmm.b[1][1] = 0.9999999
+
+    # print(hmm.b)
+
 def read_faust(ifn):
     f = open(ifn, 'r')
     for line in f:
@@ -338,9 +397,14 @@ def read_faust(ifn):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument('-i', '--input', help = 'faust filename', required=True)
+    p.add_argument('-t', '--train', help = 'faust filename', required=True)
     p.add_argument('-n', '--num_iter', help = 'num of iterations [10]', required = False)
+    p.add_argument('-i', '--input_seq', help = 'input sequence to test', required = True)
+    p.add_argument('-s', '--seed', help = 'seed for numpy random', required = False)
     args = p.parse_args()
+
+    if args.seed:
+        np.random.seed(int(args.seed))
 
     states = ['i', 'u']
     obs = ['T', 'F']
@@ -349,23 +413,23 @@ def main():
     emissions = generate_random_B(states, obs)
     initial = generate_random_pi(states, equal_odds = False)
 
-    observations = [x for x in read_faust(args.input)]
+    observations = [x for x in read_faust(args.train)]
+    test_seq = [s for s in args.input_seq]
 
     hmm = HMM(transitions, emissions, initial, states, obs)
+    sum_lik = hmm.train_multiple(observations)
 
-    obs = ['T', 'T', 'F', 'T', 'F', 'F', 'F', 'F', 'T', 'T', 'T']
-
-    hmm.train_multiple(observations)
-
-    hmm.viterbi(obs)
+    # guess = hmm.viterbi(test_seq)
 
 
-
-
-
-
+    params = [sum_lik]
+    for i in range(len(states)):
+        for k in range(len(obs)):
+            params.append(hmm.b[i][k])
+    print(
+        '\t'.join([str(s) for s in params])
+    )
 
 
 if __name__ == '__main__':
-    random.seed(41)
     main()
