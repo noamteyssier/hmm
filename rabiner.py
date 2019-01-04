@@ -31,7 +31,7 @@ class HMM:
         self.forward(observation)
         self.backward(observation)
 
-        if normalize:
+        if normalize == True:
             self.normalize_alpha()
             self.normalize_beta()
 
@@ -190,7 +190,7 @@ class HMM:
 
 
         return [self.states[o] for o in optimal]
-    def train(self, observation, iter = 10):
+    def train(self, observation, iter = 10, replace = True):
         T = len(observation)
         epMat = self.epsilon_matrix(observation, T)
         gamma = self.gamma_via_epsilon(T, epMat)
@@ -204,9 +204,12 @@ class HMM:
             new_A = self.update_A(T, gamma, epMat)
             new_B = self.update_B(T, gamma, observation)
 
-        self.A = new_A
-        self.B = new_B
-        self.pi = new_pi
+        if replace == True:
+            self.A = new_A
+            self.B = new_B
+            self.pi = new_pi
+
+        return(new_A, new_B, epMat, gamma)
     def epsilon_matrix(self, observation, T):
         '''
         ep[t][i][j] = P(S_i at q_t & S_j at q_t+1 | model, observation)
@@ -296,11 +299,8 @@ class HMM:
                 new_B[i][self.index_obs(o)] = num / denom
 
         return new_B
-    def train_multiple(self, observation_matrix, iter = 2):
+    def train_multiple(self, observation_matrix, iter = 20):
 
-        print('original')
-        print(self.A)
-        print(self.B)
         for it in range(iter):
             arr_o = np.array([
                 {'prob_obs' : None, 'alpha' : None, 'beta' : None} for _ in observation_matrix
@@ -314,15 +314,13 @@ class HMM:
                 arr_o[k]['alpha'] = self.f_nodes.copy()
                 arr_o[k]['beta'] = self.b_nodes.copy()
 
-            self.update_multiple(arr_o, K, observation_matrix)
-            print('iteration %i' %it)
-            print(self.A)
-            print(self.B)
-            print('-----')
+            # self.update_multiple(arr_o, K, observation_matrix
+            self.update_multiple_independent(arr_o, observation_matrix)
+            break
+
+
 
     def update_multiple(self, arr_o, K, observation_matrix):
-        sum_prob_obs = sum(1 / arr_o[k]['prob_obs'] for k in range(K))
-
         # indexed a[i][j]
         self.A_bar = np.array([
         [{'num' : 0, 'denom' : 0} for _ in range(self.N)] for _ in range(self.N)
@@ -394,12 +392,42 @@ class HMM:
             for o in range(self.M):
                 self.B_bar[i][o]['value'] = self.B_bar[i][o]['num'] / self.B_bar[i][o]['denom']
                 self.B[i][o] = self.B_bar[i][o]['value']
+    def update_multiple_independent(self, arr_o, observation_matrix):
+        K = len(observation_matrix)
+
+        exp_a = np.array([
+            [{'num' : 0, 'denom' : 0} for _ in range(self.N)] for _ in range(self.N)
+        ])
+
+        exp_b = np.array([
+            [{'num' : 0, 'denom' : 0} for _ in range(self.M)] for _ in range(self.N)
+        ])
+
+        for k in range(K):
+            if k != 2:
+                continue
+            obs_k = observation_matrix[k]
+            new_a, new_b, epsilon, gamma = self.train(obs_k, replace = False, iter = 1)
+
+            print(gamma)
+
+            # reestimate transmission probabilities
+            for t in range(len(epsilon)):
+                for i in range(self.N):
+                    for j in range(self.N):
+                        exp_a[i][j]['num'] += epsilon[t][i][j]
+                        exp_a[i][j]['denom'] += gamma[t][i]
+
+
+
+            # reestimate emission probabilities
+            for t in range(len(obs_k)):
+                for i in range(self.N):
 
 
 
 
-
-
+            break
 
 
 
@@ -548,7 +576,7 @@ def ama1():
     args = p.parse_args()
 
     states = ['i','u']
-    obs = ['t','f']
+    obs = ['T','F']
 
     transitions = generate_random_A(states)
     emissions = generate_random_B(states, obs)
@@ -558,7 +586,14 @@ def ama1():
 
     obs_matrix = [o for o in read_file(args.input)]
 
-    hmm.train_multiple(obs_matrix)
+    hmm.train_multiple(obs_matrix, iter = 10)
+
+    # for i in range(len(obs_matrix)):
+    #     print(
+    #         ''.join(obs_matrix[i]), ''.join(hmm.viterbi(obs_matrix[i]))
+    #     )
+    #     # break
+
 
 
 
@@ -566,6 +601,6 @@ def ama1():
 
 
 if __name__ == '__main__':
-    random.seed(42)
+    random.seed(23)
     # main()
     ama1()

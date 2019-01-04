@@ -423,9 +423,16 @@ def main():
 
 
     params = [sum_lik]
+
+    for i in range(len(states)):
+        for j in range(len(states)):
+            params.append(hmm.a[i][j])
+
     for i in range(len(states)):
         for k in range(len(obs)):
             params.append(hmm.b[i][k])
+
+
     print(
         '\t'.join([str(s) for s in params])
     )
